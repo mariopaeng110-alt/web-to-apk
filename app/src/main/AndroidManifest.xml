@@ -4,9 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme"
-        android:label="Web To APK"
-        android:usesCleartextTraffic="true">
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher">
 
         <activity
             android:name=".MainActivity"
@@ -20,5 +23,4 @@
         </activity>
 
     </application>
-
 </manifest>
