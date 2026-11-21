@@ -3,6 +3,8 @@ name: Build Web APK
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [build-apk]
 
 permissions:
   contents: read
@@ -13,34 +15,83 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Java 17
-        uses: actions/setup-java@v5
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.9
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: '8.9'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          cmdline-tools-version: 15859902
 
-      - name: Install Android SDK Packages
+      - name: Install SDK
         run: |
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
+      - name: Prepare App Configuration
+        if: github.event_name == 'repository_dispatch'
+        env:
+          APP_URL: ${{ github.event.client_payload.url }}
+          APP_NAME: ${{ github.event.client_payload.appName }}
+          APP_ID: ${{ github.event.client_payload.packageName }}
+          APP_ICON: ${{ github.event.client_payload.icon }}
+        run: |
+          mkdir -p app/src/main/assets
+          python3 - <<'PY'
+          import os, json, base64
+          from pathlib import Path
+
+          url = os.environ["APP_URL"]
+          name = os.environ["APP_NAME"]
+          package = os.environ["APP_ID"]
+          icon = os.environ["APP_ICON"]
+
+          if not url.startswith(("https://", "http://")):
+              raise SystemExit("Invalid URL")
+          if not all(x.replace("_", "a").isalnum() for x in package.split(".")):
+              raise SystemExit("Invalid package name")
+
+          Path("app/src/main/assets/config.json").write_text(
+              json.dumps({"url": url, "name": name})
+          )
+
+          icon = icon.split(",", 1)[-1]
+          Path("/tmp/icon.png").write_bytes(base64.b64decode(icon))
+          Path("app-id.txt").write_text(package)
+          Path("app-name.txt").write_text(name)
+          PY
+
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+
+          convert /tmp/icon.png -resize 48x48 app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 72x72 app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 96x96 app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert /tmp/icon.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
       - name: Build APK
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: |
+          if [ -f app-id.txt ]; then
+            gradle --no-daemon assembleDebug -PappId="$(cat app-id.txt)"
+          else
+            gradle --no-daemon assembleDebug
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
