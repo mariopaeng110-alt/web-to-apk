@@ -46,49 +46,60 @@ jobs:
           APP_ICON: ${{ github.event.client_payload.icon }}
         run: |
           mkdir -p app/src/main/assets
+
           python3 - <<'PY'
-          import os, json, base64
+          import os, json, base64, re
           from pathlib import Path
 
           url = os.environ["APP_URL"]
           name = os.environ["APP_NAME"]
           package = os.environ["APP_ID"]
-          icon = os.environ["APP_ICON"]
+          icon = os.environ.get("APP_ICON", "")
 
           if not url.startswith(("https://", "http://")):
               raise SystemExit("Invalid URL")
-          if not all(x.replace("_", "a").isalnum() for x in package.split(".")):
+
+          if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+", package):
               raise SystemExit("Invalid package name")
+
+          if not name.strip():
+              raise SystemExit("App name is required")
 
           Path("app/src/main/assets/config.json").write_text(
               json.dumps({"url": url, "name": name})
           )
 
-          icon = icon.split(",", 1)[-1]
-          Path("/tmp/icon.png").write_bytes(base64.b64decode(icon))
-          Path("app-id.txt").write_text(package)
-          Path("app-name.txt").write_text(name)
+          if icon:
+              icon = icon.split(",", 1)[-1]
+              Path("/tmp/icon.png").write_bytes(base64.b64decode(icon))
           PY
 
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/mipmap-mdpi
-          mkdir -p app/src/main/res/mipmap-xhdpi
-          mkdir -p app/src/main/res/mipmap-xxhdpi
-          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          if [ -f /tmp/icon.png ]; then
+            sudo apt-get update
+            sudo apt-get install -y imagemagick
 
-          sudo apt-get update
-          sudo apt-get install -y imagemagick
+            mkdir -p app/src/main/res/mipmap-mdpi
+            mkdir -p app/src/main/res/mipmap-hdpi
+            mkdir -p app/src/main/res/mipmap-xhdpi
+            mkdir -p app/src/main/res/mipmap-xxhdpi
+            mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-          convert /tmp/icon.png -resize 48x48 app/src/main/res/mipmap-mdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 72x72 app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 96x96 app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          convert /tmp/icon.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 48x48 app/src/main/res/mipmap-mdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 72x72 app/src/main/res/mipmap-hdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 96x96 app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          fi
+
+          echo "$APP_ID" > app-id.txt
+          echo "$APP_NAME" > app-name.txt
 
       - name: Build APK
         run: |
           if [ -f app-id.txt ]; then
-            gradle --no-daemon assembleDebug -PappId="$(cat app-id.txt)"
+            gradle --no-daemon assembleDebug \
+              -PappId="$(cat app-id.txt)" \
+              -PappName="$(cat app-name.txt)"
           else
             gradle --no-daemon assembleDebug
           fi
@@ -99,3 +110,4 @@ jobs:
           name: WebToAPK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 1
