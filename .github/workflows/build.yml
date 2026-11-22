@@ -1,257 +1,449 @@
 name: Build Web APK
 
 on:
-workflow_dispatch:
-repository_dispatch:
-types: [build-apk]
+  workflow_dispatch:
+
+  repository_dispatch:
+    types: [build-apk]
 
 permissions:
-contents: write
+  contents: read
 
 jobs:
-build:
-runs-on: ubuntu-latest
-timeout-minutes: 30
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+  build:
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: '17'
+    runs-on: ubuntu-latest
 
-  - name: Setup Gradle
-    uses: gradle/actions/setup-gradle@v4
+    timeout-minutes: 30
 
-  - name: Setup Android SDK
-    uses: android-actions/setup-android@v4
+    steps:
 
-  - name: Install SDK
-    run: |
-      sdkmanager --install \
-        "platform-tools" \
-        "platforms;android-35" \
-        "build-tools;35.0.0"
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # =========================================================
-  # PREPARE WEBSITE / HTML BUILD
-  # =========================================================
-  - name: Prepare App Configuration
-    if: github.event_name == 'repository_dispatch'
-    env:
-      BUILD_MODE: ${{ github.event.client_payload.mode }}
-      APP_URL: ${{ github.event.client_payload.url }}
-      APP_NAME: ${{ github.event.client_payload.appName }}
-      APP_ID: ${{ github.event.client_payload.packageName }}
-      APP_ICON: ${{ github.event.client_payload.icon }}
-      HTML_PATH: ${{ github.event.client_payload.htmlPath }}
-    run: |
-      mkdir -p app/src/main/assets
 
-      python3 - <<'PY'
-      import os
-      import json
-      import base64
-      import re
-      import urllib.request
-      from pathlib import Path
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
-      mode = os.environ.get("BUILD_MODE", "website")
-      url = os.environ.get("APP_URL", "")
-      name = os.environ.get("APP_NAME", "")
-      package = os.environ.get("APP_ID", "")
-      icon = os.environ.get("APP_ICON", "")
-      html_path = os.environ.get("HTML_PATH", "")
 
-      # -----------------------------
-      # Validate app information
-      # -----------------------------
-      if not re.fullmatch(
-          r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+",
-          package
-      ):
-          raise SystemExit("Invalid package name")
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      if not name.strip():
-          raise SystemExit("App name is required")
 
-      # -----------------------------
-      # WEBSITE BUILD
-      # -----------------------------
-      if mode == "website":
-          if not url.startswith(("https://", "http://")):
-              raise SystemExit("Invalid URL")
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
 
-          Path("app/src/main/assets/config.json").write_text(
-              json.dumps({
-                  "mode": "website",
-                  "url": url,
-                  "name": name
-              })
+
+      - name: Install SDK
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+
+      - name: Read GitHub Runner RAM
+        run: |
+          python3 - <<'PY'
+          import os
+          import json
+
+          ram_kb = 0
+
+          with open("/proc/meminfo") as f:
+              for line in f:
+                  if line.startswith("MemTotal:"):
+                      ram_kb = int(line.split()[1])
+                      break
+
+          ram_gb = round(ram_kb / 1024 / 1024, 2)
+
+          print("GitHub Runner RAM:", ram_gb, "GB")
+          print("CPU:", os.cpu_count())
+
+          os.makedirs("build-info", exist_ok=True)
+
+          with open("build-info/runner.json","w") as f:
+              json.dump({
+                  "ramGB": ram_gb,
+                  "cpu": os.cpu_count()
+              }, f)
+          PY
+
+
+      - name: Prepare App Configuration
+        if: github.event_name == 'repository_dispatch'
+
+        env:
+
+          APP_URL: ${{ github.event.client_payload.url }}
+
+          APP_NAME: ${{ github.event.client_payload.appName }}
+
+          APP_ID: ${{ github.event.client_payload.packageName }}
+
+          APP_ICON: ${{ github.event.client_payload.icon }}
+
+          APP_PERMISSIONS: ${{ toJson(github.event.client_payload.permissions) }}
+
+        run: |
+
+          mkdir -p app/src/main/assets
+
+          python3 - <<'PY'
+
+          import os
+          import json
+          import base64
+          import re
+          from pathlib import Path
+
+          url = os.environ["APP_URL"]
+
+          name = os.environ["APP_NAME"]
+
+          package = os.environ["APP_ID"]
+
+          icon = os.environ.get("APP_ICON", "")
+
+          permissions_raw = os.environ.get(
+              "APP_PERMISSIONS",
+              "[]"
           )
 
-      # -----------------------------
-      # HTML BUILD
-      # -----------------------------
-      elif mode == "html":
-          if not html_path:
-              raise SystemExit("HTML path is missing")
 
-          source = Path(html_path)
-
-          if not source.exists():
+          if not url.startswith(
+              ("https://","http://")
+          ):
               raise SystemExit(
-                  f"HTML file not found: {html_path}"
+                  "Invalid URL"
               )
 
-          html = source.read_text(
-              encoding="utf-8",
-              errors="replace"
+
+          if not re.fullmatch(
+              r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+",
+              package
+          ):
+              raise SystemExit(
+                  "Invalid package name"
+              )
+
+
+          if not name.strip():
+
+              raise SystemExit(
+                  "App name is required"
+              )
+
+
+          try:
+
+              permissions = json.loads(
+                  permissions_raw
+              )
+
+          except:
+
+              permissions = []
+
+
+          allowed = {
+
+              "camera":
+                  "android.permission.CAMERA",
+
+              "microphone":
+                  "android.permission.RECORD_AUDIO",
+
+              "location":
+                  "android.permission.ACCESS_FINE_LOCATION",
+
+              "notification":
+                  "android.permission.POST_NOTIFICATIONS",
+
+              "bluetooth":
+                  "android.permission.BLUETOOTH_CONNECT",
+
+              "contacts":
+                  "android.permission.READ_CONTACTS",
+
+              "phone":
+                  "android.permission.READ_PHONE_STATE",
+
+              "media":
+                  "android.permission.READ_MEDIA_IMAGES"
+
+          }
+
+
+          selected = []
+
+          for item in permissions:
+
+              if item in allowed:
+
+                  selected.append(
+                      allowed[item]
+                  )
+
+
+          Path(
+              "app-permissions.txt"
+          ).write_text(
+              "\n".join(selected)
           )
 
-          if not html.strip():
-              raise SystemExit("HTML file is empty")
 
-          Path("app/src/main/assets/index.html").write_text(
-              html,
-              encoding="utf-8"
-          )
-
-          Path("app/src/main/assets/config.json").write_text(
+          Path(
+              "app/src/main/assets/config.json"
+          ).write_text(
               json.dumps({
-                  "mode": "html",
-                  "url": "",
-                  "name": name
+                  "url":url,
+                  "name":name
               })
           )
 
-      else:
-          raise SystemExit(
-              f"Unknown build mode: {mode}"
-          )
 
-      # -----------------------------
-      # Save app information
-      # -----------------------------
-      Path("app-id.txt").write_text(package)
-      Path("app-name.txt").write_text(name)
+          if icon:
 
-      # -----------------------------
-      # Decode icon
-      # -----------------------------
-      if icon:
-          try:
-              icon = icon.split(",", 1)[-1]
-              Path("/tmp/icon.png").write_bytes(
+              icon = icon.split(
+                  ",",
+                  1
+              )[-1]
+
+              Path(
+                  "/tmp/icon.png"
+              ).write_bytes(
                   base64.b64decode(icon)
               )
-          except Exception as e:
-              print("Icon decode failed:", e)
 
-      PY
 
-      # =====================================================
-      # ICON
-      # =====================================================
-      if [ -f /tmp/icon.png ]; then
-        sudo apt-get update
-        sudo apt-get install -y imagemagick
+          Path(
+              "app-id.txt"
+          ).write_text(package)
 
-        mkdir -p app/src/main/res/mipmap-mdpi
-        mkdir -p app/src/main/res/mipmap-hdpi
-        mkdir -p app/src/main/res/mipmap-xhdpi
-        mkdir -p app/src/main/res/mipmap-xxhdpi
-        mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-        convert /tmp/icon.png -resize 48x48 \
-          app/src/main/res/mipmap-mdpi/ic_launcher.png
+          Path(
+              "app-name.txt"
+          ).write_text(name)
 
-        convert /tmp/icon.png -resize 72x72 \
-          app/src/main/res/mipmap-hdpi/ic_launcher.png
+          PY
 
-        convert /tmp/icon.png -resize 96x96 \
-          app/src/main/res/mipmap-xhdpi/ic_launcher.png
 
-        convert /tmp/icon.png -resize 144x144 \
-          app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+      - name: Ensure Launcher Icon
+        run: |
 
-        convert /tmp/icon.png -resize 192x192 \
-          app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-      fi
+          if [ ! -f app/src/main/res/mipmap-mdpi/ic_launcher.png ]; then
 
-  # =========================================================
-  # DEFAULT ICON
-  # =========================================================
-  - name: Ensure Launcher Icon
-    run: |
-      if [ ! -f app/src/main/res/mipmap-mdpi/ic_launcher.png ]; then
-        sudo apt-get update
-        sudo apt-get install -y imagemagick
+            sudo apt-get update
 
-        mkdir -p app/src/main/res/mipmap-mdpi
-        mkdir -p app/src/main/res/mipmap-hdpi
-        mkdir -p app/src/main/res/mipmap-xhdpi
-        mkdir -p app/src/main/res/mipmap-xxhdpi
-        mkdir -p app/src/main/res/mipmap-xxxhdpi
+            sudo apt-get install -y imagemagick
 
-        convert -size 48x48 xc:"#202040" \
-          app/src/main/res/mipmap-mdpi/ic_launcher.png
+            mkdir -p app/src/main/res/mipmap-mdpi
+            mkdir -p app/src/main/res/mipmap-hdpi
+            mkdir -p app/src/main/res/mipmap-xhdpi
+            mkdir -p app/src/main/res/mipmap-xxhdpi
+            mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-        convert -size 72x72 xc:"#202040" \
-          app/src/main/res/mipmap-hdpi/ic_launcher.png
+            convert \
+              -size 48x48 \
+              xc:"#202040" \
+              app/src/main/res/mipmap-mdpi/ic_launcher.png
 
-        convert -size 96x96 xc:"#202040" \
-          app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            convert \
+              -size 72x72 \
+              xc:"#202040" \
+              app/src/main/res/mipmap-hdpi/ic_launcher.png
 
-        convert -size 144x144 xc:"#202040" \
-          app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            convert \
+              -size 96x96 \
+              xc:"#202040" \
+              app/src/main/res/mipmap-xhdpi/ic_launcher.png
 
-        convert -size 192x192 xc:"#202040" \
-          app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-      fi
+            convert \
+              -size 144x144 \
+              xc:"#202040" \
+              app/src/main/res/mipmap-xxhdpi/ic_launcher.png
 
-  # =========================================================
-  # BUILD APK
-  # =========================================================
-  - name: Build APK
-    run: |
-      if [ -f app-id.txt ]; then
-        gradle --no-daemon assembleDebug \
-          -PappId="$(cat app-id.txt)" \
-          -PappName="$(cat app-name.txt)"
-      else
-        gradle --no-daemon assembleDebug
-      fi
+            convert \
+              -size 192x192 \
+              xc:"#202040" \
+              app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
-  # =========================================================
-  # UPLOAD APK
-  # =========================================================
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: WebToAPK
-      path: app/build/outputs/apk/debug/app-debug.apk
-      if-no-files-found: error
-      retention-days: 1
+          fi
 
-  # =========================================================
-  # CLEAN TEMP HTML
-  # =========================================================
-  - name: Remove Temporary HTML
-    if: github.event_name == 'repository_dispatch' && github.event.client_payload.mode == 'html'
-    env:
-      GH_TOKEN: ${{ github.token }}
-      HTML_PATH: ${{ github.event.client_payload.htmlPath }}
-    run: |
-      if [ -n "$HTML_PATH" ] && [ -f "$HTML_PATH" ]; then
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-        git rm -f "$HTML_PATH" || true
+      - name: Install Custom Icon
+        if: github.event_name == 'repository_dispatch'
 
-        git commit -m "cleanup temporary HTML build" || true
-        git push || true
-      fi
+        run: |
+
+          if [ -f /tmp/icon.png ]; then
+
+            sudo apt-get update
+
+            sudo apt-get install -y imagemagick
+
+            mkdir -p app/src/main/res/mipmap-mdpi
+            mkdir -p app/src/main/res/mipmap-hdpi
+            mkdir -p app/src/main/res/mipmap-xhdpi
+            mkdir -p app/src/main/res/mipmap-xxhdpi
+            mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+            convert /tmp/icon.png \
+              -resize 48x48 \
+              app/src/main/res/mipmap-mdpi/ic_launcher.png
+
+            convert /tmp/icon.png \
+              -resize 72x72 \
+              app/src/main/res/mipmap-hdpi/ic_launcher.png
+
+            convert /tmp/icon.png \
+              -resize 96x96 \
+              app/src/main/res/mipmap-xhdpi/ic_launcher.png
+
+            convert /tmp/icon.png \
+              -resize 144x144 \
+              app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+
+            convert /tmp/icon.png \
+              -resize 192x192 \
+              app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          fi
+
+
+      - name: Generate Permission Manifest
+        run: |
+
+          python3 - <<'PY'
+
+          from pathlib import Path
+
+          manifest = Path(
+              "app/src/main/AndroidManifest.xml"
+          )
+
+          if not manifest.exists():
+
+              raise SystemExit(
+                  "AndroidManifest.xml tidak ditemukan"
+              )
+
+
+          text = manifest.read_text()
+
+
+          permission_file = Path(
+              "app-permissions.txt"
+          )
+
+
+          permissions = []
+
+          if permission_file.exists():
+
+              permissions = [
+                  x.strip()
+                  for x in permission_file.read_text().splitlines()
+                  if x.strip()
+              ]
+
+
+          lines = []
+
+
+          for permission in permissions:
+
+              line = (
+                  '<uses-permission '
+                  'android:name="' +
+                  permission +
+                  '" />'
+              )
+
+              if line not in text:
+
+                  lines.append(line)
+
+
+          if lines:
+
+              marker = (
+                  '<manifest '
+              )
+
+              position = text.find(
+                  ">"
+              )
+
+              if position == -1:
+
+                  raise SystemExit(
+                      "Manifest tidak valid"
+                  )
+
+
+              insertion = (
+                  "\n    " +
+                  "\n    ".join(lines) +
+                  "\n"
+              )
+
+              text = (
+                  text[:position+1] +
+                  insertion +
+                  text[position+1:]
+              )
+
+
+          manifest.write_text(text)
+
+          print(
+              "Permissions aktif:"
+          )
+
+          for p in permissions:
+
+              print(
+                  " -",
+                  p
+              )
+
+          PY
+
+
+      - name: Build APK
+        run: |
+
+          if [ -f app-id.txt ]; then
+
+            gradle --no-daemon assembleDebug \
+              -PappId="$(cat app-id.txt)" \
+              -PappName="$(cat app-name.txt)"
+
+          else
+
+            gradle --no-daemon assembleDebug
+
+          fi
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: WebToAPK
+
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            build-info/runner.json
+
+          if-no-files-found: error
+
+          retention-days: 1
