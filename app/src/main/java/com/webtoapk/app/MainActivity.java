@@ -102,10 +102,6 @@ public class MainActivity extends Activity {
 
         /*
          * USER AGENT
-         *
-         * Dibuat seperti Chrome Android
-         * supaya website tidak salah mendeteksi
-         * WebView sebagai browser lama.
          */
         String chromeUA =
                 settings.getUserAgentString();
@@ -117,7 +113,6 @@ public class MainActivity extends Activity {
                     " Chrome/131.0.0.0 Mobile"
             );
         }
-
 
         /*
          * WEBVIEW CLIENT
@@ -153,7 +148,6 @@ public class MainActivity extends Activity {
                 }
         );
 
-
         /*
          * CHROME CLIENT
          *
@@ -163,7 +157,6 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(
                 new WebChromeClient()
         );
-
 
         /*
          * DOWNLOAD
@@ -196,9 +189,8 @@ public class MainActivity extends Activity {
                 }
         );
 
-
         /*
-         * Jangan block mixed content.
+         * MIXED CONTENT
          */
         if (
                 android.os.Build.VERSION.SDK_INT >=
@@ -210,7 +202,6 @@ public class MainActivity extends Activity {
             );
         }
     }
-
 
     /*
      * Ambil URL dari config.json
@@ -251,7 +242,6 @@ public class MainActivity extends Activity {
         webView.loadUrl(url);
     }
 
-
     /*
      * Tombol BACK Android
      */
@@ -271,7 +261,9 @@ public class MainActivity extends Activity {
         }
     }
 
-
+    /*
+     * Destroy WebView
+     */
     @Override
     protected void onDestroy() {
 
