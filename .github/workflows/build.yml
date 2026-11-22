@@ -10,11 +10,8 @@ permissions:
   contents: read
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
-
     timeout-minutes: 30
 
     steps:
@@ -22,181 +19,119 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
+      - name: Setup Android
+        uses: android-actions/setup-android@v3
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-
-
-      - name: Install SDK
+      - name: Install Android SDK
         run: |
-          sdkmanager --install \
-            "platform-tools" \
+          sdkmanager "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-
-      - name: Read GitHub Runner RAM
-        run: |
-          python3 - <<'PY'
-          import os
-          import json
-
-          ram_kb = 0
-
-          with open("/proc/meminfo") as f:
-              for line in f:
-                  if line.startswith("MemTotal:"):
-                      ram_kb = int(line.split()[1])
-                      break
-
-          ram_gb = round(ram_kb / 1024 / 1024, 2)
-
-          print("GitHub Runner RAM:", ram_gb, "GB")
-          print("CPU:", os.cpu_count())
-
-          os.makedirs("build-info", exist_ok=True)
-
-          with open("build-info/runner.json","w") as f:
-              json.dump({
-                  "ramGB": ram_gb,
-                  "cpu": os.cpu_count()
-              }, f)
-          PY
-
-
-      - name: Prepare App Configuration
-        if: github.event_name == 'repository_dispatch'
-
+      - name: Create Android Project
         env:
-
           APP_URL: ${{ github.event.client_payload.url }}
-
           APP_NAME: ${{ github.event.client_payload.appName }}
-
           APP_ID: ${{ github.event.client_payload.packageName }}
-
           APP_ICON: ${{ github.event.client_payload.icon }}
-
           APP_PERMISSIONS: ${{ toJson(github.event.client_payload.permissions) }}
 
         run: |
 
-          mkdir -p app/src/main/assets
+          rm -rf app
+          mkdir -p app/src/main/java
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
 
           python3 - <<'PY'
-
           import os
           import json
           import base64
           import re
           from pathlib import Path
 
-          url = os.environ["APP_URL"]
+          url = os.environ.get("APP_URL","")
+          name = os.environ.get("APP_NAME","Web APK")
+          package = os.environ.get("APP_ID","com.elvoxi.webapk")
+          icon = os.environ.get("APP_ICON","")
+          raw = os.environ.get("APP_PERMISSIONS","[]")
 
-          name = os.environ["APP_NAME"]
-
-          package = os.environ["APP_ID"]
-
-          icon = os.environ.get("APP_ICON", "")
-
-          permissions_raw = os.environ.get(
-              "APP_PERMISSIONS",
-              "[]"
-          )
-
-
-          if not url.startswith(
-              ("https://","http://")
-          ):
-              raise SystemExit(
-                  "Invalid URL"
-              )
-
+          if not url.startswith(("http://","https://")):
+              raise Exception("URL tidak valid")
 
           if not re.fullmatch(
               r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+",
               package
           ):
-              raise SystemExit(
-                  "Invalid package name"
-              )
-
-
-          if not name.strip():
-
-              raise SystemExit(
-                  "App name is required"
-              )
-
+              raise Exception("Package name tidak valid")
 
           try:
-
-              permissions = json.loads(
-                  permissions_raw
-              )
-
+              permissions = json.loads(raw)
           except:
-
               permissions = []
 
+          permission_map = {
+              "camera": [
+                  "android.permission.CAMERA"
+              ],
 
-          allowed = {
+              "microphone": [
+                  "android.permission.RECORD_AUDIO"
+              ],
 
-              "camera":
-                  "android.permission.CAMERA",
-
-              "microphone":
-                  "android.permission.RECORD_AUDIO",
-
-              "location":
+              "location": [
                   "android.permission.ACCESS_FINE_LOCATION",
+                  "android.permission.ACCESS_COARSE_LOCATION"
+              ],
 
-              "notification":
-                  "android.permission.POST_NOTIFICATIONS",
+              "notification": [
+                  "android.permission.POST_NOTIFICATIONS"
+              ],
 
-              "bluetooth":
+              "bluetooth": [
                   "android.permission.BLUETOOTH_CONNECT",
+                  "android.permission.BLUETOOTH_SCAN"
+              ],
 
-              "contacts":
-                  "android.permission.READ_CONTACTS",
+              "contacts": [
+                  "android.permission.READ_CONTACTS"
+              ],
 
-              "phone":
-                  "android.permission.READ_PHONE_STATE",
+              "phone": [
+                  "android.permission.READ_PHONE_STATE"
+              ],
 
-              "media":
-                  "android.permission.READ_MEDIA_IMAGES"
-
+              "media": [
+                  "android.permission.READ_MEDIA_IMAGES",
+                  "android.permission.READ_MEDIA_VIDEO",
+                  "android.permission.READ_EXTERNAL_STORAGE"
+              ]
           }
-
 
           selected = []
 
           for item in permissions:
+              for p in permission_map.get(item,[]):
+                  if p not in selected:
+                      selected.append(p)
 
-              if item in allowed:
-
-                  selected.append(
-                      allowed[item]
-                  )
-
-
-          Path(
-              "app-permissions.txt"
-          ).write_text(
-              "\n".join(selected)
+          Path("selected_permissions.json").write_text(
+              json.dumps(selected)
           )
 
+          Path("app/src/main/assets").mkdir(
+              parents=True,
+              exist_ok=True
+          )
 
           Path(
               "app/src/main/assets/config.json"
@@ -207,243 +142,375 @@ jobs:
               })
           )
 
+          Path("app/src/main/values.xml").write_text("")
+
+          Path("app-name.txt").write_text(name)
+          Path("app-id.txt").write_text(package)
 
           if icon:
+              try:
+                  icon = icon.split(",",1)[-1]
 
-              icon = icon.split(
-                  ",",
-                  1
-              )[-1]
-
-              Path(
-                  "/tmp/icon.png"
-              ).write_bytes(
-                  base64.b64decode(icon)
-              )
-
-
-          Path(
-              "app-id.txt"
-          ).write_text(package)
-
-
-          Path(
-              "app-name.txt"
-          ).write_text(name)
-
+                  Path("/tmp/icon.png").write_bytes(
+                      base64.b64decode(icon)
+                  )
+              except:
+                  pass
           PY
 
-
-      - name: Ensure Launcher Icon
+      - name: Create Gradle Files
         run: |
 
-          if [ ! -f app/src/main/res/mipmap-mdpi/ic_launcher.png ]; then
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
 
-            sudo apt-get update
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
 
-            sudo apt-get install -y imagemagick
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
 
-            mkdir -p app/src/main/res/mipmap-mdpi
-            mkdir -p app/src/main/res/mipmap-hdpi
-            mkdir -p app/src/main/res/mipmap-xhdpi
-            mkdir -p app/src/main/res/mipmap-xxhdpi
-            mkdir -p app/src/main/res/mipmap-xxxhdpi
+          rootProject.name = "WebToAPK"
+          include(":app")
+          EOF
 
-            convert \
-              -size 48x48 \
-              xc:"#202040" \
-              app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.6.1' apply false
+          }
+          EOF
 
-            convert \
-              -size 72x72 \
-              xc:"#202040" \
-              app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
 
-            convert \
-              -size 96x96 \
-              xc:"#202040" \
-              app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          android {
+              namespace "com.elvoxi.webapk"
+              compileSdk 35
 
-            convert \
-              -size 144x144 \
-              xc:"#202040" \
-              app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+              defaultConfig {
+                  applicationId "com.elvoxi.webapk"
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName "1.0"
+              }
+          }
+          EOF
 
-            convert \
-              -size 192x192 \
-              xc:"#202040" \
-              app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          sed -i "s/applicationId \"com.elvoxi.webapk\"/applicationId \"$(cat app-id.txt)\"/" app/build.gradle
 
-          fi
+          sed -i "s/namespace \"com.elvoxi.webapk\"/namespace \"$(cat app-id.txt)\"/" app/build.gradle
 
-
-      - name: Install Custom Icon
-        if: github.event_name == 'repository_dispatch'
-
-        run: |
-
-          if [ -f /tmp/icon.png ]; then
-
-            sudo apt-get update
-
-            sudo apt-get install -y imagemagick
-
-            mkdir -p app/src/main/res/mipmap-mdpi
-            mkdir -p app/src/main/res/mipmap-hdpi
-            mkdir -p app/src/main/res/mipmap-xhdpi
-            mkdir -p app/src/main/res/mipmap-xxhdpi
-            mkdir -p app/src/main/res/mipmap-xxxhdpi
-
-            convert /tmp/icon.png \
-              -resize 48x48 \
-              app/src/main/res/mipmap-mdpi/ic_launcher.png
-
-            convert /tmp/icon.png \
-              -resize 72x72 \
-              app/src/main/res/mipmap-hdpi/ic_launcher.png
-
-            convert /tmp/icon.png \
-              -resize 96x96 \
-              app/src/main/res/mipmap-xhdpi/ic_launcher.png
-
-            convert /tmp/icon.png \
-              -resize 144x144 \
-              app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-
-            convert /tmp/icon.png \
-              -resize 192x192 \
-              app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-
-          fi
-
-
-      - name: Generate Permission Manifest
+      - name: Create Android Manifest
         run: |
 
           python3 - <<'PY'
-
+          import json
           from pathlib import Path
 
-          manifest = Path(
-              "app/src/main/AndroidManifest.xml"
+          permissions = json.loads(
+              Path("selected_permissions.json").read_text()
           )
 
-          if not manifest.exists():
+          lines = [
+              '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+          ]
 
-              raise SystemExit(
-                  "AndroidManifest.xml tidak ditemukan"
-              )
-
-
-          text = manifest.read_text()
-
-
-          permission_file = Path(
-              "app-permissions.txt"
-          )
-
-
-          permissions = []
-
-          if permission_file.exists():
-
-              permissions = [
-                  x.strip()
-                  for x in permission_file.read_text().splitlines()
-                  if x.strip()
-              ]
-
-
-          lines = []
-
-
-          for permission in permissions:
-
-              line = (
-                  '<uses-permission '
-                  'android:name="' +
-                  permission +
-                  '" />'
-              )
-
-              if line not in text:
-
-                  lines.append(line)
-
-
-          if lines:
-
-              marker = (
-                  '<manifest '
-              )
-
-              position = text.find(
-                  ">"
-              )
-
-              if position == -1:
-
-                  raise SystemExit(
-                      "Manifest tidak valid"
-                  )
-
-
-              insertion = (
-                  "\n    " +
-                  "\n    ".join(lines) +
-                  "\n"
-              )
-
-              text = (
-                  text[:position+1] +
-                  insertion +
-                  text[position+1:]
-              )
-
-
-          manifest.write_text(text)
-
-          print(
-              "Permissions aktif:"
+          lines.append(
+              '    <uses-permission android:name="android.permission.INTERNET"/>'
           )
 
           for p in permissions:
+              if p == "android.permission.READ_EXTERNAL_STORAGE":
+                  lines.append(
+                      '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>'
+                  )
+              else:
+                  lines.append(
+                      f'    <uses-permission android:name="{p}"/>'
+                  )
 
-              print(
-                  " -",
-                  p
-              )
+          lines.append("""
+              <application
+                  android:theme="@style/AppTheme"
+                  android:label="@string/app_name"
+                  android:usesCleartextTraffic="true"
+                  android:hardwareAccelerated="true">
 
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+
+                  </activity>
+
+              </application>
+          </manifest>
+          """)
+
+          Path(
+              "app/src/main/AndroidManifest.xml"
+          ).write_text("\n".join(lines))
           PY
 
+      - name: Create Resources
+        run: |
+
+          mkdir -p app/src/main/res/values
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#7C3CFF</item>
+                  <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+
+              </style>
+
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">Web To APK</string>
+          </resources>
+          EOF
+
+          sed -i "s/Web To APK/$(cat app-name.txt | sed 's/[&/\]/\\&/g')/" \
+            app/src/main/res/values/strings.xml
+
+      - name: Create MainActivity
+        env:
+          APP_PERMISSIONS: ${{ toJson(github.event.client_payload.permissions) }}
+
+        run: |
+
+          PACKAGE="$(cat app-id.txt)"
+
+          PACKAGE_PATH=$(echo "$PACKAGE" | tr '.' '/')
+
+          mkdir -p "app/src/main/java/$PACKAGE_PATH"
+
+          python3 - <<'PY'
+          import os
+          import json
+          from pathlib import Path
+
+          package = Path("app-id.txt").read_text().strip()
+          raw = os.environ.get("APP_PERMISSIONS","[]")
+
+          try:
+              permissions = json.loads(raw)
+          except:
+              permissions = []
+
+          requests = []
+
+          mapping = {
+              "camera":
+                  "android.Manifest.permission.CAMERA",
+
+              "microphone":
+                  "android.Manifest.permission.RECORD_AUDIO",
+
+              "location":
+                  "android.Manifest.permission.ACCESS_FINE_LOCATION",
+
+              "notification":
+                  "android.Manifest.permission.POST_NOTIFICATIONS",
+
+              "bluetooth":
+                  "android.Manifest.permission.BLUETOOTH_CONNECT",
+
+              "contacts":
+                  "android.Manifest.permission.READ_CONTACTS",
+
+              "phone":
+                  "android.Manifest.permission.READ_PHONE_STATE",
+
+              "media":
+                  "android.Manifest.permission.READ_MEDIA_IMAGES"
+          }
+
+          for p in permissions:
+              if p in mapping:
+                  requests.append(mapping[p])
+
+          request_code = ""
+
+          if requests:
+              request_code = """
+                  if (Build.VERSION.SDK_INT >= 23) {
+                      requestPermissions(new String[]{
+              """
+
+              request_code += ",\n".join(
+                  "                          " + x
+                  for x in requests
+              )
+
+              request_code += """
+                      }, 100);
+                  }
+              """
+
+          activity = f"""
+          package {package};
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.os.Build;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.webkit.PermissionRequest;
+          import android.content.pm.PackageManager;
+
+          public class MainActivity extends Activity {{
+
+              WebView web;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {{
+                  super.onCreate(savedInstanceState);
+
+                  web = new WebView(this);
+
+                  WebSettings settings =
+                      web.getSettings();
+
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+
+                  web.setWebViewClient(
+                      new WebViewClient()
+                  );
+
+                  web.setWebChromeClient(
+                      new WebChromeClient() {{
+
+                          @Override
+                          public void onPermissionRequest(
+                              final PermissionRequest request
+                          ) {{
+
+                              runOnUiThread(() -> {{
+                                  request.grant(
+                                      request.getResources()
+                                  );
+                              }});
+
+                          }}
+
+                      }}
+                  );
+
+                  setContentView(web);
+
+                  web.loadUrl(
+                      "{open("app/src/main/assets/config.json").read() if False else ""}"
+                  );
+
+                  loadWebsite();
+
+                  {request_code}
+              }}
+
+              private void loadWebsite() {{
+
+                  try {{
+
+                      java.io.InputStream input =
+                          getAssets().open("config.json");
+
+                      java.util.Scanner scanner =
+                          new java.util.Scanner(input)
+                          .useDelimiter("\\\\A");
+
+                      String json =
+                          scanner.hasNext()
+                          ? scanner.next()
+                          : "";
+
+                      org.json.JSONObject object =
+                          new org.json.JSONObject(json);
+
+                      String url =
+                          object.getString("url");
+
+                      web.loadUrl(url);
+
+                  }} catch(Exception e) {{
+
+                      web.loadData(
+                          "<h2>Gagal membuka website</h2>",
+                          "text/html",
+                          "UTF-8"
+                      );
+
+                  }}
+
+              }}
+
+              @Override
+              public void onBackPressed() {{
+
+                  if(web.canGoBack()) {{
+                      web.goBack();
+                  }} else {{
+                      super.onBackPressed();
+                  }}
+
+              }}
+
+          }}
+          """
+
+          path = (
+              "app/src/main/java/" +
+              package.replace(".","/") +
+              "/MainActivity.java"
+          )
+
+          Path(path).write_text(activity)
+          PY
 
       - name: Build APK
         run: |
 
-          if [ -f app-id.txt ]; then
+          chmod +x gradlew 2>/dev/null || true
 
-            gradle --no-daemon assembleDebug \
-              -PappId="$(cat app-id.txt)" \
-              -PappName="$(cat app-name.txt)"
-
-          else
-
-            gradle --no-daemon assembleDebug
-
-          fi
-
+          gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-
         with:
-
           name: WebToAPK
-
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            build-info/runner.json
-
+          path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
           retention-days: 1
