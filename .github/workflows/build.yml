@@ -1,237 +1,224 @@
 name: Build Web APK
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
-  repository_dispatch:
-    types:
-      - build-apk
+repository_dispatch:
+types: [build-apk]
 
 permissions:
-  contents: write
+contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+build:
+runs-on: ubuntu-latest
+timeout-minutes: 30
 
-    steps:
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-      - name: Checkout
-        uses: actions/checkout@v4
+  - name: Setup Java 17
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
+  - name: Setup Android SDK
+    uses: android-actions/setup-android@v4
+    with:
+      packages: ''
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+  - name: Install Android SDK
+    shell: bash
+    run: |
+      yes | sdkmanager --licenses >/dev/null || true
+      sdkmanager --install \
+        "platform-tools" \
+        "platforms;android-35" \
+        "build-tools;35.0.0"
 
-      - name: Create Android Project
-        shell: bash
-        env:
-          APP_NAME: ${{ github.event.client_payload.appName }}
-          PACKAGE_NAME: ${{ github.event.client_payload.packageName }}
-          WEBSITE_URL: ${{ github.event.client_payload.url }}
-          ICON_BASE64: ${{ github.event.client_payload.icon }}
-        run: |
-          set -e
+  - name: Create Android Project
+    shell: bash
+    run: |
+      APP_NAME="${{ github.event.client_payload.appName }}"
+      PACKAGE_NAME="${{ github.event.client_payload.packageName }}"
+      WEBSITE_URL="${{ github.event.client_payload.url }}"
 
-          APP_NAME="${APP_NAME:-Web To APK}"
-          PACKAGE_NAME="${PACKAGE_NAME:-com.elvoxi.webtoapk}"
-          WEBSITE_URL="${WEBSITE_URL:-https://example.com}"
+      APP_NAME="${APP_NAME:-WebToAPK}"
+      PACKAGE_NAME="${PACKAGE_NAME:-com.webtoapk.app}"
+      WEBSITE_URL="${WEBSITE_URL:-https://example.com}"
 
-          PACKAGE_PATH="${PACKAGE_NAME//./\/}"
+      mkdir -p app/src/main/java/${PACKAGE_NAME//./\/}
+      mkdir -p app/src/main/res/drawable
+      mkdir -p app/src/main/res/mipmap-hdpi
+      mkdir -p app/src/main/res/mipmap-mdpi
+      mkdir -p app/src/main/res/mipmap-xhdpi
+      mkdir -p app/src/main/res/mipmap-xxhdpi
+      mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-          mkdir -p app/src/main/java/$PACKAGE_PATH
-          mkdir -p app/src/main/res/drawable
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/mipmap-mdpi
-          mkdir -p app/src/main/res/mipmap-xhdpi
-          mkdir -p app/src/main/res/mipmap-xxhdpi
-          mkdir -p app/src/main/res/mipmap-xxxhdpi
+      cat > settings.gradle <<'EOF'
+      pluginManagement {
+          repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+          }
+      }
 
-          cat > settings.gradle <<'EOF'
-          pluginManagement {
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
+      dependencyResolutionManagement {
+          repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+          repositories {
+              google()
+              mavenCentral()
+          }
+      }
+
+      rootProject.name = "WebToAPK"
+      include(":app")
+      EOF
+
+      cat > build.gradle <<'EOF'
+      plugins {
+          id 'com.android.application' version '8.5.2' apply false
+      }
+      EOF
+
+      cat > gradle.properties <<'EOF'
+      org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+      android.useAndroidX=true
+      EOF
+
+      cat > app/build.gradle <<EOF
+      plugins {
+          id 'com.android.application'
+      }
+
+      android {
+          namespace '${PACKAGE_NAME}'
+          compileSdk 35
+
+          defaultConfig {
+              applicationId '${PACKAGE_NAME}'
+              minSdk 23
+              targetSdk 35
+              versionCode 1
+              versionName "1.0"
+          }
+      }
+
+      dependencies {
+          implementation 'androidx.appcompat:appcompat:1.7.0'
+          implementation 'androidx.webkit:webkit:1.12.1'
+      }
+      EOF
+
+      cat > app/src/main/AndroidManifest.xml <<EOF
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+          <uses-permission android:name="android.permission.INTERNET" />
+
+          <application
+              android:theme="@style/AppTheme"
+              android:label="${APP_NAME}"
+              android:usesCleartextTraffic="true"
+              android:resizeableActivity="true">
+
+              <activity
+                  android:name=".MainActivity"
+                  android:exported="true">
+
+                  <intent-filter>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent-filter>
+
+              </activity>
+
+          </application>
+
+      </manifest>
+      EOF
+
+      mkdir -p app/src/main/res/values
+
+      cat > app/src/main/res/values/styles.xml <<'EOF'
+      <resources>
+          <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+              <item name="android:fontFamily">sans</item>
+              <item name="android:colorAccent">#6C63FF</item>
+              <item name="android:windowActionModeOverlay">true</item>
+          </style>
+      </resources>
+      EOF
+
+      cat > app/src/main/java/${PACKAGE_NAME//./\/}/MainActivity.java <<EOF
+      package ${PACKAGE_NAME};
+
+      import android.app.Activity;
+      import android.os.Bundle;
+      import android.webkit.WebSettings;
+      import android.webkit.WebView;
+      import android.webkit.WebViewClient;
+
+      public class MainActivity extends Activity {
+
+          private WebView webView;
+
+          @Override
+          protected void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+
+              webView = new WebView(this);
+              setContentView(webView);
+
+              WebSettings settings = webView.getSettings();
+
+              settings.setJavaScriptEnabled(true);
+              settings.setDomStorageEnabled(true);
+              settings.setDatabaseEnabled(true);
+              settings.setLoadsImagesAutomatically(true);
+              settings.setSupportZoom(false);
+              settings.setBuiltInZoomControls(false);
+              settings.setDisplayZoomControls(false);
+
+              webView.setWebViewClient(new WebViewClient());
+
+              webView.loadUrl("${WEBSITE_URL}");
+          }
+
+          @Override
+          public void onBackPressed() {
+              if (webView.canGoBack()) {
+                  webView.goBack();
+              } else {
+                  super.onBackPressed();
               }
           }
+      }
+      EOF
 
-          dependencyResolutionManagement {
-              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
+  - name: Setup Gradle
+    uses: gradle/actions/setup-gradle@v4
 
-          rootProject.name = "WebToAPK"
-          include(":app")
-          EOF
+  - name: Build APK
+    run: |
+      gradle --no-daemon --stacktrace assembleDebug
 
-          cat > build.gradle <<'EOF'
-          plugins {
-              id 'com.android.application' version '8.5.2' apply false
-          }
-          EOF
+  - name: Rename APK
+    shell: bash
+    run: |
+      APP_NAME="${{ github.event.client_payload.appName }}"
+      APP_NAME="${APP_NAME:-WebToAPK}"
+      SAFE_NAME=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
 
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          android.useAndroidX=true
-          android.nonTransitiveRClass=true
-          EOF
+      cp \
+        app/build/outputs/apk/debug/app-debug.apk \
+        "${SAFE_NAME}.apk"
 
-          cat > app/build.gradle <<EOF
-          plugins {
-              id 'com.android.application'
-          }
-
-          android {
-              namespace '${PACKAGE_NAME}'
-              compileSdk 35
-
-              defaultConfig {
-                  applicationId '${PACKAGE_NAME}'
-                  minSdk 23
-                  targetSdk 35
-                  versionCode 1
-                  versionName "1.0"
-              }
-          }
-          EOF
-
-          cat > app/src/main/AndroidManifest.xml <<EOF
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <uses-permission android:name="android.permission.INTERNET"/>
-
-              <application
-                  android:theme="@style/AppTheme"
-                  android:label="${APP_NAME}"
-                  android:usesCleartextTraffic="true"
-                  android:hardwareAccelerated="true">
-
-                  <activity
-                      android:name=".MainActivity"
-                      android:screenOrientation="unspecified"
-                      android:exported="true">
-
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
-                      </intent-filter>
-
-                  </activity>
-
-              </application>
-
-          </manifest>
-          EOF
-
-          mkdir -p app/src/main/res/values
-
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-
-              <style name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:windowActionModeOverlay">true</item>
-                  <item name="android:colorAccent">#7C4DFF</item>
-                  <item name="android:navigationBarColor">#000000</item>
-                  <item name="android:statusBarColor">#000000</item>
-                  <item name="android:windowLightStatusBar">false</item>
-
-              </style>
-
-          </resources>
-          EOF
-
-          cat > app/src/main/java/$PACKAGE_PATH/MainActivity.java <<EOF
-          package ${PACKAGE_NAME};
-
-          import android.app.Activity;
-          import android.os.Bundle;
-          import android.graphics.Color;
-          import android.view.View;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-
-          public class MainActivity extends Activity {
-
-              private WebView webView;
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  webView = new WebView(this);
-
-                  webView.setBackgroundColor(Color.WHITE);
-
-                  WebSettings settings = webView.getSettings();
-
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
-                  settings.setLoadWithOverviewMode(true);
-                  settings.setUseWideViewPort(true);
-                  settings.setBuiltInZoomControls(false);
-                  settings.setDisplayZoomControls(false);
-                  settings.setAllowFileAccess(true);
-                  settings.setAllowContentAccess(true);
-
-                  webView.setWebViewClient(new WebViewClient());
-                  webView.setWebChromeClient(new WebChromeClient());
-
-                  setContentView(webView);
-
-                  webView.loadUrl("${WEBSITE_URL}");
-              }
-
-              @Override
-              public void onBackPressed() {
-
-                  if (webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
-          }
-          EOF
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build APK
-        run: |
-          gradle wrapper --gradle-version 8.7
-          ./gradlew assembleDebug --stacktrace
-
-      - name: Rename APK
-        shell: bash
-        env:
-          APP_NAME: ${{ github.event.client_payload.appName }}
-        run: |
-          APP_NAME="${APP_NAME:-Web_To_APK}"
-          SAFE_NAME=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
-
-          cp app/build/outputs/apk/debug/app-debug.apk \
-             "${SAFE_NAME}.apk"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: WebToAPK
-          path: "*.apk"
-          if-no-files-found: error
-          retention-days: 7
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: WebToAPK
+      path: "*.apk"
+      if-no-files-found: error
