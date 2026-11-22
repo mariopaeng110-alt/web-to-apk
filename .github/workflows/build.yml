@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
 
   repository_dispatch:
-    types: [build-apk]
+    types:
+      - build-apk
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
 
@@ -23,133 +23,35 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
+          cache: gradle
 
-      - name: Setup Android
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install SDK
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Create Project
+      - name: Create Android Project
+        shell: bash
         env:
-          APP_URL: ${{ github.event.client_payload.url }}
           APP_NAME: ${{ github.event.client_payload.appName }}
-          APP_ID: ${{ github.event.client_payload.packageName }}
-          APP_PERMISSIONS: ${{ toJson(github.event.client_payload.permissions) }}
-
+          PACKAGE_NAME: ${{ github.event.client_payload.packageName }}
+          WEBSITE_URL: ${{ github.event.client_payload.url }}
+          ICON_BASE64: ${{ github.event.client_payload.icon }}
         run: |
+          set -e
 
-          rm -rf app
+          APP_NAME="${APP_NAME:-Web To APK}"
+          PACKAGE_NAME="${PACKAGE_NAME:-com.elvoxi.webtoapk}"
+          WEBSITE_URL="${WEBSITE_URL:-https://example.com}"
 
-          mkdir -p app/src/main/java
-          mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/assets
+          PACKAGE_PATH="${PACKAGE_NAME//./\/}"
 
-          python3 - <<'PY'
-          import os
-          import json
-          import re
-          from pathlib import Path
-
-          url = os.environ.get("APP_URL","")
-          name = os.environ.get("APP_NAME","Web APK")
-          package = os.environ.get(
-              "APP_ID",
-              "com.elvoxi.webapk"
-          )
-
-          raw = os.environ.get(
-              "APP_PERMISSIONS",
-              "[]"
-          )
-
-          if not url.startswith(("http://","https://")):
-              raise Exception("URL tidak valid")
-
-          if not re.fullmatch(
-              r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+",
-              package
-          ):
-              raise Exception("Package name tidak valid")
-
-          try:
-              permissions = json.loads(raw)
-          except:
-              permissions = []
-
-          permission_map = {
-              "camera": [
-                  "android.permission.CAMERA"
-              ],
-
-              "microphone": [
-                  "android.permission.RECORD_AUDIO"
-              ],
-
-              "location": [
-                  "android.permission.ACCESS_FINE_LOCATION",
-                  "android.permission.ACCESS_COARSE_LOCATION"
-              ],
-
-              "notification": [
-                  "android.permission.POST_NOTIFICATIONS"
-              ],
-
-              "bluetooth": [
-                  "android.permission.BLUETOOTH_CONNECT",
-                  "android.permission.BLUETOOTH_SCAN"
-              ],
-
-              "contacts": [
-                  "android.permission.READ_CONTACTS"
-              ],
-
-              "phone": [
-                  "android.permission.READ_PHONE_STATE"
-              ],
-
-              "media": [
-                  "android.permission.READ_MEDIA_IMAGES",
-                  "android.permission.READ_MEDIA_VIDEO",
-                  "android.permission.READ_EXTERNAL_STORAGE"
-              ]
-          }
-
-          selected = []
-
-          for item in permissions:
-              for permission in permission_map.get(item, []):
-                  if permission not in selected:
-                      selected.append(permission)
-
-          Path("selected_permissions.json").write_text(
-              json.dumps(selected)
-          )
-
-          Path(
-              "app/src/main/assets/config.json"
-          ).write_text(
-              json.dumps({
-                  "url": url,
-                  "name": name
-              })
-          )
-
-          Path("app-name.txt").write_text(name)
-          Path("app-id.txt").write_text(package)
-          PY
-
-      - name: Create Gradle
-        run: |
+          mkdir -p app/src/main/java/$PACKAGE_PATH
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -161,10 +63,7 @@ jobs:
           }
 
           dependencyResolutionManagement {
-              repositoriesMode.set(
-                  RepositoriesMode.FAIL_ON_PROJECT_REPOS
-              )
-
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
                   google()
                   mavenCentral()
@@ -177,11 +76,15 @@ jobs:
 
           cat > build.gradle <<'EOF'
           plugins {
-              id 'com.android.application' version '8.6.1' apply false
+              id 'com.android.application' version '8.5.2' apply false
           }
           EOF
 
-          PACKAGE="$(cat app-id.txt)"
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
 
           cat > app/build.gradle <<EOF
           plugins {
@@ -189,11 +92,11 @@ jobs:
           }
 
           android {
-              namespace "$PACKAGE"
+              namespace '${PACKAGE_NAME}'
               compileSdk 35
 
               defaultConfig {
-                  applicationId "$PACKAGE"
+                  applicationId '${PACKAGE_NAME}'
                   minSdk 23
                   targetSdk 35
                   versionCode 1
@@ -202,51 +105,20 @@ jobs:
           }
           EOF
 
-      - name: Create Manifest
-        run: |
+          cat > app/src/main/AndroidManifest.xml <<EOF
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
+              <uses-permission android:name="android.permission.INTERNET"/>
 
-          permissions = json.loads(
-              Path(
-                  "selected_permissions.json"
-              ).read_text()
-          )
-
-          lines = [
-              '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-              '    <uses-permission android:name="android.permission.INTERNET"/>'
-          ]
-
-          for permission in permissions:
-
-              if permission == \
-                  "android.permission.READ_EXTERNAL_STORAGE":
-
-                  lines.append(
-                      '    <uses-permission '
-                      'android:name="android.permission.READ_EXTERNAL_STORAGE" '
-                      'android:maxSdkVersion="32"/>'
-                  )
-
-              else:
-
-                  lines.append(
-                      f'    <uses-permission '
-                      f'android:name="{permission}"/>'
-                  )
-
-          lines.append("""
               <application
                   android:theme="@style/AppTheme"
-                  android:label="@string/app_name"
+                  android:label="${APP_NAME}"
                   android:usesCleartextTraffic="true"
                   android:hardwareAccelerated="true">
 
                   <activity
                       android:name=".MainActivity"
+                      android:screenOrientation="unspecified"
                       android:exported="true">
 
                       <intent-filter>
@@ -257,267 +129,109 @@ jobs:
                   </activity>
 
               </application>
+
           </manifest>
-          """)
-
-          Path(
-              "app/src/main/AndroidManifest.xml"
-          ).write_text(
-              "\n".join(lines)
-          )
-          PY
-
-      - name: Create Resources
-        run: |
-
-          APP_NAME="$(cat app-name.txt)"
-
-          cat > app/src/main/res/values/strings.xml <<EOF
-          <resources>
-              <string name="app_name">$APP_NAME</string>
-          </resources>
           EOF
+
+          mkdir -p app/src/main/res/values
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <resources>
 
-              <style
-                  name="AppTheme"
+              <style name="AppTheme"
                   parent="android:style/Theme.Material.Light.NoActionBar">
 
                   <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#7C3CFF</item>
-                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:windowActionModeOverlay">true</item>
+                  <item name="android:colorAccent">#7C4DFF</item>
                   <item name="android:navigationBarColor">#000000</item>
+                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:windowLightStatusBar">false</item>
 
               </style>
 
           </resources>
           EOF
 
-      - name: Create MainActivity
-        env:
-          APP_PERMISSIONS: ${{ toJson(github.event.client_payload.permissions) }}
-
-        run: |
-
-          python3 - <<'PY'
-          import os
-          import json
-          from pathlib import Path
-
-          package = Path(
-              "app-id.txt"
-          ).read_text().strip()
-
-          raw = os.environ.get(
-              "APP_PERMISSIONS",
-              "[]"
-          )
-
-          try:
-              selected = json.loads(raw)
-          except:
-              selected = []
-
-          mapping = {
-              "camera":
-                  "Manifest.permission.CAMERA",
-
-              "microphone":
-                  "Manifest.permission.RECORD_AUDIO",
-
-              "location":
-                  "Manifest.permission.ACCESS_FINE_LOCATION",
-
-              "notification":
-                  "Manifest.permission.POST_NOTIFICATIONS",
-
-              "bluetooth":
-                  "Manifest.permission.BLUETOOTH_CONNECT",
-
-              "contacts":
-                  "Manifest.permission.READ_CONTACTS",
-
-              "phone":
-                  "Manifest.permission.READ_PHONE_STATE",
-
-              "media":
-                  "Manifest.permission.READ_MEDIA_IMAGES"
-          }
-
-          requests = []
-
-          for item in selected:
-              if item in mapping:
-                  if mapping[item] not in requests:
-                      requests.append(
-                          mapping[item]
-                      )
-
-          request_code = ""
-
-          if requests:
-
-              request_code = """
-                  if (Build.VERSION.SDK_INT >= 23) {
-                      requestPermissions(
-                          new String[]{
-              """
-
-              request_code += ",\n".join(
-                  "                              " + x
-                  for x in requests
-              )
-
-              request_code += """
-                          },
-                          100
-                      );
-                  }
-              """
-
-          path = (
-              "app/src/main/java/" +
-              package.replace(".","/") +
-              "/MainActivity.java"
-          )
-
-          Path(path).parent.mkdir(
-              parents=True,
-              exist_ok=True
-          )
-
-          code = f'''
-          package {package};
+          cat > app/src/main/java/$PACKAGE_PATH/MainActivity.java <<EOF
+          package ${PACKAGE_NAME};
 
           import android.app.Activity;
           import android.os.Bundle;
-          import android.os.Build;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
+          import android.graphics.Color;
+          import android.view.View;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
-          import android.webkit.PermissionRequest;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
 
-          public class MainActivity extends Activity {{
+          public class MainActivity extends Activity {
 
-              private WebView web;
+              private WebView webView;
 
               @Override
-              protected void onCreate(
-                  Bundle savedInstanceState
-              ) {{
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
 
-                  super.onCreate(
-                      savedInstanceState
-                  );
+                  webView = new WebView(this);
 
-                  web = new WebView(this);
+                  webView.setBackgroundColor(Color.WHITE);
 
-                  WebSettings settings =
-                      web.getSettings();
+                  WebSettings settings = webView.getSettings();
 
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
-                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setLoadWithOverviewMode(true);
+                  settings.setUseWideViewPort(true);
+                  settings.setBuiltInZoomControls(false);
+                  settings.setDisplayZoomControls(false);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
 
-                  web.setWebViewClient(
-                      new WebViewClient()
-                  );
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
 
-                  web.setWebChromeClient(
-                      new WebChromeClient() {{
+                  setContentView(webView);
 
-                          @Override
-                          public void onPermissionRequest(
-                              final PermissionRequest request
-                          ) {{
-
-                              runOnUiThread(
-                                  () -> request.grant(
-                                      request.getResources()
-                                  )
-                              );
-
-                          }}
-
-                      }}
-                  );
-
-                  setContentView(web);
-
-                  loadWebsite();
-
-                  {request_code}
-              }}
-
-              private void loadWebsite() {{
-
-                  try {{
-
-                      java.io.InputStream input =
-                          getAssets().open(
-                              "config.json"
-                          );
-
-                      java.util.Scanner scanner =
-                          new java.util.Scanner(input)
-                          .useDelimiter("\\\\A");
-
-                      String json =
-                          scanner.hasNext()
-                          ? scanner.next()
-                          : "";
-
-                      org.json.JSONObject object =
-                          new org.json.JSONObject(json);
-
-                      String url =
-                          object.getString("url");
-
-                      web.loadUrl(url);
-
-                  }} catch(Exception e) {{
-
-                      web.loadData(
-                          "<h2>Gagal membuka website</h2>",
-                          "text/html",
-                          "UTF-8"
-                      );
-
-                  }}
-
-              }}
+                  webView.loadUrl("${WEBSITE_URL}");
+              }
 
               @Override
-              public void onBackPressed() {{
+              public void onBackPressed() {
 
-                  if(web.canGoBack()) {{
-                      web.goBack();
-                  }} else {{
+                  if (webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
                       super.onBackPressed();
-                  }}
+                  }
+              }
+          }
+          EOF
 
-              }}
-
-          }}
-          '''
-
-          Path(path).write_text(code)
-          PY
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build APK
         run: |
-          gradle --no-daemon --parallel assembleDebug
+          gradle wrapper --gradle-version 8.7
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Rename APK
+        shell: bash
+        env:
+          APP_NAME: ${{ github.event.client_payload.appName }}
+        run: |
+          APP_NAME="${APP_NAME:-Web_To_APK}"
+          SAFE_NAME=$(echo "$APP_NAME" | sed 's/[^a-zA-Z0-9._-]/_/g')
+
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             "${SAFE_NAME}.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: WebToAPK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: "*.apk"
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
