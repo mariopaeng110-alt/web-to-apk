@@ -71,11 +71,12 @@ jobs:
           fi
 
           if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager tidak ditemukan."
+            echo "ERROR: sdkmanager tidak ditemukan."
             exit 1
           fi
 
-          echo "sdkmanager: $SDKMANAGER"
+          echo "Using sdkmanager:"
+          echo "$SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
@@ -84,11 +85,11 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-          echo "Android SDK siap."
+          echo "Android SDK berhasil disiapkan."
 
 
       # =========================================
-      # READ BUILD DATA
+      # READ BUILD INFORMATION
       # =========================================
 
       - name: Read Build Information
@@ -108,11 +109,11 @@ jobs:
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_ENV"
           echo "WEBSITE_URL=$WEBSITE_URL" >> "$GITHUB_ENV"
 
-          echo "================================="
+          echo "========================================"
           echo "APP NAME : $APP_NAME"
           echo "PACKAGE  : $PACKAGE_NAME"
           echo "WEBSITE  : $WEBSITE_URL"
-          echo "================================="
+          echo "========================================"
 
 
       # =========================================
@@ -133,7 +134,7 @@ jobs:
 
 
           # =====================================
-          # SETTINGS
+          # SETTINGS.GRADLE
           # =====================================
 
           cat > settings.gradle <<'EOF'
@@ -161,7 +162,7 @@ jobs:
 
 
           # =====================================
-          # ROOT BUILD
+          # ROOT BUILD.GRADLE
           # =====================================
 
           cat > build.gradle <<'EOF'
@@ -172,7 +173,7 @@ jobs:
 
 
           # =====================================
-          # GRADLE PROPERTIES
+          # GRADLE.PROPERTIES
           # =====================================
 
           cat > gradle.properties <<'EOF'
@@ -183,7 +184,7 @@ jobs:
 
 
           # =====================================
-          # APP BUILD
+          # APP BUILD.GRADLE
           # =====================================
 
           cat > app/build.gradle <<EOF
@@ -207,7 +208,7 @@ jobs:
 
 
           # =====================================
-          # APP NAME
+          # STRINGS.XML
           # =====================================
 
           cat > app/src/main/res/values/strings.xml <<EOF
@@ -219,7 +220,7 @@ jobs:
 
 
           # =====================================
-          # THEME
+          # STYLES.XML
           # =====================================
 
           cat > app/src/main/res/values/styles.xml <<'EOF'
@@ -245,7 +246,7 @@ jobs:
 
 
           # =====================================
-          # MANIFEST
+          # ANDROID MANIFEST
           # =====================================
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -289,7 +290,7 @@ jobs:
 
 
           # =====================================
-          # CONFIG JSON
+          # CONFIG.JSON
           # =====================================
 
           cat > app/src/main/assets/config.json <<EOF
@@ -340,37 +341,16 @@ jobs:
                   loadWebsite();
               }
 
-
               private void setupWebView() {
 
                   WebSettings settings =
                           webView.getSettings();
 
-
-                  /*
-                   * JAVASCRIPT
-                   */
-
                   settings.setJavaScriptEnabled(true);
-
-
-                  /*
-                   * LOCAL STORAGE
-                   */
 
                   settings.setDomStorageEnabled(true);
 
-
-                  /*
-                   * DATABASE
-                   */
-
                   settings.setDatabaseEnabled(true);
-
-
-                  /*
-                   * COOKIES
-                   */
 
                   CookieManager cookies =
                           CookieManager.getInstance();
@@ -382,57 +362,27 @@ jobs:
                           true
                   );
 
-
-                  /*
-                   * WEBSITE VIEW
-                   */
-
                   settings.setLoadWithOverviewMode(true);
 
                   settings.setUseWideViewPort(true);
-
-
-                  /*
-                   * CACHE
-                   */
 
                   settings.setCacheMode(
                           WebSettings.LOAD_DEFAULT
                   );
 
-
-                  /*
-                   * FILE ACCESS
-                   */
-
                   settings.setAllowFileAccess(true);
 
                   settings.setAllowContentAccess(true);
 
-
-                  /*
-                   * MEDIA
-                   */
-
                   settings.setMediaPlaybackRequiresUserGesture(
                           false
                   );
-
-
-                  /*
-                   * ZOOM
-                   */
 
                   settings.setSupportZoom(false);
 
                   settings.setBuiltInZoomControls(false);
 
                   settings.setDisplayZoomControls(false);
-
-
-                  /*
-                   * USER AGENT
-                   */
 
                   String chromeUA =
                           settings.getUserAgentString();
@@ -444,11 +394,6 @@ jobs:
                               " Chrome/131.0.0.0 Mobile"
                       );
                   }
-
-
-                  /*
-                   * WEBVIEW CLIENT
-                   */
 
                   webView.setWebViewClient(
                           new WebViewClient() {
@@ -466,7 +411,6 @@ jobs:
                                   return true;
                               }
 
-
                               @Override
                               public boolean shouldOverrideUrlLoading(
                                       WebView view,
@@ -480,19 +424,9 @@ jobs:
                           }
                   );
 
-
-                  /*
-                   * CHROME CLIENT
-                   */
-
                   webView.setWebChromeClient(
                           new WebChromeClient()
                   );
-
-
-                  /*
-                   * DOWNLOAD
-                   */
 
                   webView.setDownloadListener(
                           new DownloadListener() {
@@ -522,11 +456,6 @@ jobs:
                           }
                   );
 
-
-                  /*
-                   * MIXED CONTENT
-                   */
-
                   if (
                           android.os.Build.VERSION.SDK_INT >=
                           android.os.Build.VERSION_CODES.LOLLIPOP
@@ -537,11 +466,6 @@ jobs:
                       );
                   }
               }
-
-
-              /*
-               * LOAD WEBSITE
-               */
 
               private void loadWebsite() {
 
@@ -579,11 +503,6 @@ jobs:
                   webView.loadUrl(url);
               }
 
-
-              /*
-               * BACK BUTTON
-               */
-
               @Override
               public void onBackPressed() {
 
@@ -599,11 +518,6 @@ jobs:
                       super.onBackPressed();
                   }
               }
-
-
-              /*
-               * DESTROY
-               */
 
               @Override
               protected void onDestroy() {
@@ -629,42 +543,53 @@ jobs:
 
       - name: Create App Icon
         shell: bash
+        env:
+          ICON_DATA: ${{ github.event.client_payload.icon }}
         run: |
           set -e
 
-          ICON_DATA="${{ github.event.client_payload.icon }}"
+          mkdir -p app/src/main/res/drawable
 
           if [ -n "$ICON_DATA" ]; then
 
-            echo "$ICON_DATA" \
-              | sed 's/^data:image\/[^;]*;base64,//' \
+            echo "Logo dari HTML ditemukan."
+
+            CLEAN_ICON="$ICON_DATA"
+
+            case "$CLEAN_ICON" in
+              data:image/*)
+                CLEAN_ICON="${CLEAN_ICON#*,}"
+                ;;
+            esac
+
+            printf '%s' "$CLEAN_ICON" \
               | base64 -d \
               > app/src/main/res/drawable/ic_launcher.webp
 
-            echo "Icon dari HTML berhasil dibuat."
+            if [ ! -s app/src/main/res/drawable/ic_launcher.webp ]; then
+              echo "ERROR: Logo kosong atau gagal decode."
+              exit 1
+            fi
+
+            echo "Logo berhasil dibuat."
+
+            ls -lh \
+              app/src/main/res/drawable/ic_launcher.webp
 
           else
 
-            cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
-            <vector
-                xmlns:android="http://schemas.android.com/apk/res/android"
-                android:width="108dp"
-                android:height="108dp"
-                android:viewportWidth="108"
-                android:viewportHeight="108">
+            echo "Logo tidak dikirim."
+            echo "Membuat icon default."
 
-                <path
-                    android:fillColor="#6C63FF"
-                    android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/>
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
+              '<path android:fillColor="#6C63FF" android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/>' \
+              '<path android:fillColor="#FFFFFF" android:pathData="M30,30 L78,30 L78,78 L30,78 Z"/>' \
+              '</vector>' \
+              > app/src/main/res/drawable/ic_launcher.xml
 
-                <path
-                    android:fillColor="#FFFFFF"
-                    android:pathData="M30,30 L78,30 L78,78 L30,78 Z"/>
-
-            </vector>
-            EOF
-
-            echo "Icon default dibuat."
+            echo "Icon default berhasil dibuat."
 
           fi
 
@@ -678,43 +603,43 @@ jobs:
         run: |
           set -e
 
-          echo "================================="
-          echo "ANDROID PROJECT"
-          echo "================================="
+          echo "========================================"
+          echo "PROJECT FILES"
+          echo "========================================"
 
           find app/src/main \
             -type f \
             | sort
 
           echo ""
-          echo "================================="
+          echo "========================================"
           echo "MANIFEST"
-          echo "================================="
+          echo "========================================"
 
           cat app/src/main/AndroidManifest.xml
 
           echo ""
-          echo "================================="
-          echo "MAIN ACTIVITY CHECK"
-          echo "================================="
+          echo "========================================"
+          echo "CONFIG"
+          echo "========================================"
+
+          cat app/src/main/assets/config.json
+
+          echo ""
+          echo "========================================"
+          echo "MAIN ACTIVITY"
+          echo "========================================"
 
           grep -n \
             "public class MainActivity extends Activity" \
             "app/src/main/java/${PACKAGE_NAME//./\/}/MainActivity.java"
 
           echo ""
-          echo "================================="
-          echo "CONFIG"
-          echo "================================="
+          echo "========================================"
+          echo "ICON"
+          echo "========================================"
 
-          cat app/src/main/assets/config.json
-
-          echo ""
-          echo "================================="
-          echo "APP NAME"
-          echo "================================="
-
-          cat app/src/main/res/values/strings.xml
+          ls -lh app/src/main/res/drawable/
 
 
       # =========================================
@@ -726,23 +651,23 @@ jobs:
         run: |
           set -e
 
-          echo "================================="
-          echo "JAVA VERSION"
-          echo "================================="
+          echo "========================================"
+          echo "JAVA"
+          echo "========================================"
 
           java -version
 
           echo ""
-          echo "================================="
-          echo "GRADLE VERSION"
-          echo "================================="
+          echo "========================================"
+          echo "GRADLE"
+          echo "========================================"
 
           gradle --version
 
           echo ""
-          echo "================================="
+          echo "========================================"
           echo "BUILD APK"
-          echo "================================="
+          echo "========================================"
 
           gradle \
             --no-daemon \
@@ -765,11 +690,12 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "APK tidak ditemukan."
+            echo "ERROR: APK tidak ditemukan."
             exit 1
           fi
 
-          echo "APK berhasil dibuat:"
+          echo "APK berhasil dibuat."
+
           ls -lh "$APK"
 
 
@@ -793,10 +719,8 @@ jobs:
             app/build/outputs/apk/debug/app-debug.apk \
             "${SAFE_NAME}.apk"
 
-          echo "================================="
-          echo "FINAL APK"
+          echo "APK FINAL:"
           echo "${SAFE_NAME}.apk"
-          echo "================================="
 
 
       # =========================================
