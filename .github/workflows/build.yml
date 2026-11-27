@@ -1,61 +1,85 @@
-name: Build WebToApk
+
+name: ELVOXI WebToAPK Build
 
 on:
-  workflow_dispatch:
-    inputs:
-      website_url:
-        description: "Website URL"
-        required: true
-        type: string
-      app_name:
-        description: "App Name"
-        required: true
-        type: string
-      package_name:
-        description: "Package Name"
-        required: true
-        type: string
-      splash_text:
-        description: "Splash Text"
-        required: false
-        default: "ELVOXI"
-        type: string
-      splash_duration:
-        description: "Splash Duration (ms)"
-        required: false
-        default: "1500"
-        type: string
+  repository_dispatch:
+    types: [build-apk]
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
+    env:
+      WEB_URL: ${{ github.event.client_payload.url }}
+      APP_NAME: ${{ github.event.client_payload.appName }}
+      APP_PACKAGE: ${{ github.event.client_payload.packageName }}
+      APP_ICON: ${{ github.event.client_payload.icon }}
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Create Android Project
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare Android project
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          mkdir -p app/src/main/java/${{ inputs.package_name }}
+          if [[ -z "$WEB_URL" || -z "$APP_NAME" || -z "$APP_PACKAGE" ]]; then
+            echo "ERROR: Payload HTML tidak lengkap."
+            exit 1
+          fi
+
+          if [[ ! "$WEB_URL" =~ ^https?:// ]]; then
+            echo "ERROR: URL harus menggunakan HTTP atau HTTPS."
+            exit 1
+          fi
+
+          if [[ ! "$APP_PACKAGE" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]]; then
+            echo "ERROR: Package name tidak valid."
+            exit 1
+          fi
+
+          mkdir -p app/src/main/java
           mkdir -p app/src/main/res/drawable
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/values
+          mkdir -p gradle-project
 
-          PACKAGE_PATH=$(echo "${{ inputs.package_name }}" | tr '.' '/')
+          export PROJECT_DIR="$GITHUB_WORKSPACE"
 
-          cat > settings.gradle <<'EOF'
+          python - <<'PY'
+          import os, re, html, base64, io
+          from pathlib import Path
+
+          root = Path(os.environ["PROJECT_DIR"])
+          package = os.environ["APP_PACKAGE"]
+          app_name = html.escape(os.environ["APP_NAME"])
+          web_url = os.environ["WEB_URL"]
+
+          package_dir = root / "app/src/main/java" / package.replace(".", "/")
+          package_dir.mkdir(parents=True, exist_ok=True)
+
+          (root / "settings.gradle").write_text("""
           pluginManagement {
               repositories {
                   google()
@@ -63,7 +87,6 @@ jobs:
                   gradlePluginPortal()
               }
           }
-
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
               repositories {
@@ -71,170 +94,181 @@ jobs:
                   mavenCentral()
               }
           }
+          rootProject.name = 'ELVOXI-WebToAPK'
+          include ':app'
+          """.strip() + "\n")
 
-          rootProject.name = "WebToApk"
-          include(":app")
-          EOF
-
-          cat > build.gradle <<'EOF'
+          (root / "build.gradle").write_text("""
           plugins {
               id 'com.android.application' version '8.7.3' apply false
           }
-          EOF
+          """.strip() + "\n")
 
-          cat > app/build.gradle <<EOF
+          (root / "gradle.properties").write_text("""
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          """.strip() + "\n")
+
+          (root / "app/build.gradle").write_text("""
           plugins {
               id 'com.android.application'
           }
 
           android {
-              namespace '${{ inputs.package_name }}'
+              namespace System.getenv('APP_PACKAGE')
               compileSdk 35
 
               defaultConfig {
-                  applicationId '${{ inputs.package_name }}'
+                  applicationId System.getenv('APP_PACKAGE')
                   minSdk 23
                   targetSdk 35
                   versionCode 1
                   versionName "1.0"
               }
+
+              buildFeatures {
+                  buildConfig true
+              }
+
+              defaultConfig {
+                  buildConfigField "String", "WEB_URL",
+                      '"' + System.getenv('WEB_URL').replace('\\\\', '\\\\\\\\').replace('"', '\\\\"') + '"'
+              }
           }
+          """.strip() + "\n")
 
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.7.0'
-          }
-          EOF
+          (root / "app/src/main/res/values").mkdir(parents=True, exist_ok=True)
+          (root / "app/src/main/res/values/strings.xml").write_text(
+              '<?xml version="1.0" encoding="utf-8"?>\\n'
+              '<resources><string name="app_name">' + app_name +
+              '</string></resources>'
+          )
 
-          cat > app/src/main/res/values/colors.xml <<'EOF'
-          <resources>
-              <color name="splash_bg">#080808</color>
-          </resources>
-          EOF
-
-          cat > app/src/main/res/values/themes.xml <<'EOF'
-          <resources>
-              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:windowLightStatusBar">false</item>
-                  <item name="android:statusBarColor">@color/splash_bg</item>
-                  <item name="android:navigationBarColor">@color/splash_bg</item>
-              </style>
-          </resources>
-          EOF
-
-          cat > app/src/main/AndroidManifest.xml <<EOF
+          manifest = """<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
               <uses-permission android:name="android.permission.INTERNET"/>
-
               <application
-                  android:theme="@style/AppTheme"
-                  android:label="${{ inputs.app_name }}"
-                  android:usesCleartextTraffic="true"
-                  android:hardwareAccelerated="true">
-
+                  android:label="@string/app_name"
+                  android:icon="@drawable/ic_launcher"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:usesCleartextTraffic="true">
                   <activity
                       android:name=".MainActivity"
-                      android:screenOrientation="portrait"
-                      android:exported="true">
-
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
-
                   </activity>
-
               </application>
           </manifest>
-          EOF
+          """
+          (root / "app/src/main/AndroidManifest.xml").write_text(manifest)
 
-          cat > app/src/main/java/${PACKAGE_PATH}/MainActivity.java <<EOF
-          package ${{ inputs.package_name }};
+          java = f'''package {package};
 
           import android.app.Activity;
           import android.os.Bundle;
-          import android.graphics.Color;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.widget.LinearLayout;
-          import android.widget.TextView;
-          import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.view.View;
+          import android.graphics.Color;
 
-          public class MainActivity extends Activity {
-
-              private static final long SPLASH_TIME =
-                      ${{
-                        inputs.splash_duration
-                      }}L;
+          public class MainActivity extends Activity {{
+              private WebView webView;
 
               @Override
-              protected void onCreate(Bundle savedInstanceState) {
+              protected void onCreate(Bundle savedInstanceState) {{
                   super.onCreate(savedInstanceState);
 
-                  showSplash();
-              }
+                  getWindow().setStatusBarColor(Color.BLACK);
+                  getWindow().setNavigationBarColor(Color.BLACK);
 
-              private void showSplash() {
+                  webView = new WebView(this);
+                  webView.setBackgroundColor(Color.WHITE);
 
-                  LinearLayout splash = new LinearLayout(this);
-                  splash.setOrientation(LinearLayout.VERTICAL);
-                  splash.setGravity(Gravity.CENTER);
-                  splash.setBackgroundColor(Color.rgb(8, 8, 8));
-
-                  TextView title = new TextView(this);
-                  title.setText("${{ inputs.splash_text }}");
-                  title.setTextColor(Color.WHITE);
-                  title.setTextSize(26);
-                  title.setGravity(Gravity.CENTER);
-
-                  splash.addView(title);
-
-                  setContentView(splash);
-
-                  splash.postDelayed(() -> openWebsite(), SPLASH_TIME);
-              }
-
-              private void openWebsite() {
-
-                  WebView web = new WebView(this);
-
-                  web.setWebViewClient(new WebViewClient());
-
-                  WebSettings settings = web.getSettings();
+                  WebSettings settings = webView.getSettings();
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
-                  settings.setLoadWithOverviewMode(true);
-                  settings.setUseWideViewPort(true);
                   settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setLoadsImagesAutomatically(true);
+                  settings.setJavaScriptCanOpenWindowsAutomatically(true);
 
-                  web.loadUrl("${{ inputs.website_url }}");
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
 
-                  setContentView(web);
-              }
-          }
-          EOF
+                  setContentView(webView);
+                  webView.loadUrl(BuildConfig.WEB_URL);
+              }}
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+              @Override
+              public void onBackPressed() {{
+                  if (webView != null && webView.canGoBack()) {{
+                      webView.goBack();
+                  }} else {{
+                      super.onBackPressed();
+                  }}
+              }}
+          }}
+          '''
+          (package_dir / "MainActivity.java").write_text(java)
+
+          # Generate app icon from the HTML payload, or create a fallback.
+          from PIL import Image, ImageDraw
+
+          icon_data = os.environ.get("APP_ICON", "")
+          image = None
+
+          try:
+              if icon_data.startswith("data:") and "," in icon_data:
+                  raw = base64.b64decode(icon_data.split(",", 1)[1])
+                  image = Image.open(io.BytesIO(raw)).convert("RGBA")
+          except Exception:
+              image = None
+
+          if image is None:
+              image = Image.new("RGBA", (192, 192), (18, 18, 18, 255))
+              draw = ImageDraw.Draw(image)
+              draw.rounded_rectangle((16, 16, 176, 176), radius=35,
+                                     fill=(150, 15, 35, 255))
+              draw.text((55, 78), "E", fill="white")
+
+          image.thumbnail((192, 192))
+          canvas = Image.new("RGBA", (192, 192), (18, 18, 18, 255))
+          canvas.alpha_composite(image, ((192-image.width)//2, (192-image.height)//2))
+          canvas.save(root / "app/src/main/res/drawable/ic_launcher.png")
+          PY
+
+      - name: Install Python image library
+        run: pip install Pillow
+
+      - name: Download Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q gradle-8.9-bin.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
       - name: Build APK
         run: |
-          set -e
-          gradle wrapper --gradle-version 8.9
-          ./gradlew assembleDebug --stacktrace
+          gradle --no-daemon --stacktrace assembleDebug
 
-      - name: Rename APK
+      - name: Verify APK
         run: |
-          mkdir -p output
-          cp app/build/outputs/apk/debug/app-debug.apk \
-            "output/${{ inputs.app_name }}.apk"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK tidak ditemukan."
+            exit 1
+          fi
+          ls -lh "$APK"
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: WebToAPK
-          path: output/*.apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
