@@ -1,141 +1,59 @@
-name: Build Web APK
+name: Build WebToApk
 
 on:
   workflow_dispatch:
-
-  repository_dispatch:
-    types:
-      - build-apk
-
-permissions:
-  contents: read
+    inputs:
+      website_url:
+        description: "Website URL"
+        required: true
+        type: string
+      app_name:
+        description: "App Name"
+        required: true
+        type: string
+      package_name:
+        description: "Package Name"
+        required: true
+        type: string
+      splash_text:
+        description: "Splash Text"
+        required: false
+        default: "ELVOXI"
+        type: string
+      splash_duration:
+        description: "Splash Duration (ms)"
+        required: false
+        default: "1500"
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-
-      # =========================================
-      # CHECKOUT
-      # =========================================
-
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-
-      # =========================================
-      # JAVA 17
-      # =========================================
-
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-
-      # =========================================
-      # GRADLE
-      # =========================================
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
-
-
-      # =========================================
-      # ANDROID SDK
-      # =========================================
-
-      - name: Prepare Android SDK
-        shell: bash
-        run: |
-          set -e
-
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
-          SDKMANAGER=""
-
-          if [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
-              -name sdkmanager \
-              -type f \
-              2>/dev/null | head -n 1)
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager tidak ditemukan."
-            exit 1
-          fi
-
-          echo "Using sdkmanager:"
-          echo "$SDKMANAGER"
-
-          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-
-          "$SDKMANAGER" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-          echo "Android SDK berhasil disiapkan."
-
-
-      # =========================================
-      # READ BUILD INFORMATION
-      # =========================================
-
-      - name: Read Build Information
-        shell: bash
-        run: |
-          set -e
-
-          APP_NAME="${{ github.event.client_payload.appName }}"
-          PACKAGE_NAME="${{ github.event.client_payload.packageName }}"
-          WEBSITE_URL="${{ github.event.client_payload.url }}"
-
-          APP_NAME="${APP_NAME:-WebToAPK}"
-          PACKAGE_NAME="${PACKAGE_NAME:-com.webtoapk.app}"
-          WEBSITE_URL="${WEBSITE_URL:-https://example.com}"
-
-          echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
-          echo "PACKAGE_NAME=$PACKAGE_NAME" >> "$GITHUB_ENV"
-          echo "WEBSITE_URL=$WEBSITE_URL" >> "$GITHUB_ENV"
-
-          echo "========================================"
-          echo "APP NAME : $APP_NAME"
-          echo "PACKAGE  : $PACKAGE_NAME"
-          echo "WEBSITE  : $WEBSITE_URL"
-          echo "========================================"
-
-
-      # =========================================
-      # CREATE ANDROID PROJECT
-      # =========================================
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Create Android Project
         shell: bash
         run: |
           set -e
 
-          PKG_PATH="${PACKAGE_NAME//./\/}"
+          mkdir -p app/src/main/java/${{ inputs.package_name }}
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/values
 
-          mkdir -p "app/src/main/java/$PKG_PATH"
-          mkdir -p "app/src/main/res/values"
-          mkdir -p "app/src/main/res/drawable"
-          mkdir -p "app/src/main/assets"
-
-
-          # =====================================
-          # SETTINGS.GRADLE
-          # =====================================
+          PACKAGE_PATH=$(echo "${{ inputs.package_name }}" | tr '.' '/')
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -148,44 +66,21 @@ jobs:
 
           dependencyResolutionManagement {
               repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-
               repositories {
                   google()
                   mavenCentral()
               }
           }
 
-          rootProject.name = "WebToAPK"
-
+          rootProject.name = "WebToApk"
           include(":app")
           EOF
 
-
-          # =====================================
-          # ROOT BUILD.GRADLE
-          # =====================================
-
           cat > build.gradle <<'EOF'
           plugins {
-              id 'com.android.application' version '8.5.2' apply false
+              id 'com.android.application' version '8.7.3' apply false
           }
           EOF
-
-
-          # =====================================
-          # GRADLE.PROPERTIES
-          # =====================================
-
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-          android.useAndroidX=false
-          android.nonTransitiveRClass=false
-          EOF
-
-
-          # =====================================
-          # APP BUILD.GRADLE
-          # =====================================
 
           cat > app/build.gradle <<EOF
           plugins {
@@ -193,543 +88,153 @@ jobs:
           }
 
           android {
-              namespace '${PACKAGE_NAME}'
+              namespace '${{ inputs.package_name }}'
               compileSdk 35
 
               defaultConfig {
-                  applicationId '${PACKAGE_NAME}'
+                  applicationId '${{ inputs.package_name }}'
                   minSdk 23
                   targetSdk 35
                   versionCode 1
                   versionName "1.0"
               }
           }
+
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.7.0'
+          }
           EOF
 
-
-          # =====================================
-          # STRINGS.XML
-          # =====================================
-
-          cat > app/src/main/res/values/strings.xml <<EOF
-          <?xml version="1.0" encoding="utf-8"?>
+          cat > app/src/main/res/values/colors.xml <<'EOF'
           <resources>
-              <string name="app_name">${APP_NAME}</string>
+              <color name="splash_bg">#080808</color>
           </resources>
           EOF
 
-
-          # =====================================
-          # STYLES.XML
-          # =====================================
-
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-
+          cat > app/src/main/res/values/themes.xml <<'EOF'
           <resources>
-
-              <style
-                  name="AppTheme"
-                  parent="android:style/Theme.Material.Light.NoActionBar">
-
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
                   <item name="android:fontFamily">sans</item>
-                  <item name="android:windowActionModeOverlay">true</item>
-                  <item name="android:colorAccent">#6C63FF</item>
                   <item name="android:windowLightStatusBar">false</item>
-                  <item name="android:statusBarColor">#000000</item>
-                  <item name="android:navigationBarColor">#000000</item>
-
+                  <item name="android:statusBarColor">@color/splash_bg</item>
+                  <item name="android:navigationBarColor">@color/splash_bg</item>
               </style>
-
           </resources>
           EOF
 
+          cat > app/src/main/AndroidManifest.xml <<EOF
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-          # =====================================
-          # ANDROID MANIFEST
-          # =====================================
-
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-
-          <manifest
-              xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <uses-permission
-                  android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.INTERNET"/>
 
               <application
-                  android:allowBackup="false"
+                  android:theme="@style/AppTheme"
+                  android:label="${{ inputs.app_name }}"
                   android:usesCleartextTraffic="true"
-                  android:hardwareAccelerated="true"
-                  android:label="@string/app_name"
-                  android:icon="@drawable/ic_launcher"
-                  android:roundIcon="@drawable/ic_launcher"
-                  android:theme="@style/AppTheme">
+                  android:hardwareAccelerated="true">
 
                   <activity
                       android:name=".MainActivity"
+                      android:screenOrientation="portrait"
                       android:exported="true">
 
                       <intent-filter>
-
-                          <action
-                              android:name="android.intent.action.MAIN" />
-
-                          <category
-                              android:name="android.intent.category.LAUNCHER" />
-
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
 
                   </activity>
 
               </application>
-
           </manifest>
           EOF
 
-
-          # =====================================
-          # CONFIG.JSON
-          # =====================================
-
-          cat > app/src/main/assets/config.json <<EOF
-          {
-            "url": "${WEBSITE_URL}"
-          }
-          EOF
-
-
-          # =====================================
-          # MAIN ACTIVITY
-          # =====================================
-
-          cat > "app/src/main/java/$PKG_PATH/MainActivity.java" <<EOF
-          package ${PACKAGE_NAME};
+          cat > app/src/main/java/${PACKAGE_PATH}/MainActivity.java <<EOF
+          package ${{ inputs.package_name }};
 
           import android.app.Activity;
-          import android.content.Intent;
-          import android.net.Uri;
           import android.os.Bundle;
-          import android.webkit.CookieManager;
-          import android.webkit.DownloadListener;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebResourceRequest;
+          import android.graphics.Color;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
 
-          import org.json.JSONObject;
-
-          import java.io.InputStream;
-          import java.nio.charset.StandardCharsets;
-
           public class MainActivity extends Activity {
 
-              private WebView webView;
+              private static final long SPLASH_TIME =
+                      ${{
+                        inputs.splash_duration
+                      }}L;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
 
-                  webView = new WebView(this);
-
-                  setContentView(webView);
-
-                  setupWebView();
-
-                  loadWebsite();
+                  showSplash();
               }
 
-              private void setupWebView() {
+              private void showSplash() {
 
-                  WebSettings settings =
-                          webView.getSettings();
+                  LinearLayout splash = new LinearLayout(this);
+                  splash.setOrientation(LinearLayout.VERTICAL);
+                  splash.setGravity(Gravity.CENTER);
+                  splash.setBackgroundColor(Color.rgb(8, 8, 8));
 
+                  TextView title = new TextView(this);
+                  title.setText("${{ inputs.splash_text }}");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(26);
+                  title.setGravity(Gravity.CENTER);
+
+                  splash.addView(title);
+
+                  setContentView(splash);
+
+                  splash.postDelayed(() -> openWebsite(), SPLASH_TIME);
+              }
+
+              private void openWebsite() {
+
+                  WebView web = new WebView(this);
+
+                  web.setWebViewClient(new WebViewClient());
+
+                  WebSettings settings = web.getSettings();
                   settings.setJavaScriptEnabled(true);
-
                   settings.setDomStorageEnabled(true);
-
                   settings.setDatabaseEnabled(true);
-
-                  CookieManager cookies =
-                          CookieManager.getInstance();
-
-                  cookies.setAcceptCookie(true);
-
-                  cookies.setAcceptThirdPartyCookies(
-                          webView,
-                          true
-                  );
-
                   settings.setLoadWithOverviewMode(true);
-
                   settings.setUseWideViewPort(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
 
-                  settings.setCacheMode(
-                          WebSettings.LOAD_DEFAULT
-                  );
+                  web.loadUrl("${{ inputs.website_url }}");
 
-                  settings.setAllowFileAccess(true);
-
-                  settings.setAllowContentAccess(true);
-
-                  settings.setMediaPlaybackRequiresUserGesture(
-                          false
-                  );
-
-                  settings.setSupportZoom(false);
-
-                  settings.setBuiltInZoomControls(false);
-
-                  settings.setDisplayZoomControls(false);
-
-                  String chromeUA =
-                          settings.getUserAgentString();
-
-                  if (!chromeUA.contains("Chrome")) {
-
-                      settings.setUserAgentString(
-                              chromeUA +
-                              " Chrome/131.0.0.0 Mobile"
-                      );
-                  }
-
-                  webView.setWebViewClient(
-                          new WebViewClient() {
-
-                              @Override
-                              public boolean shouldOverrideUrlLoading(
-                                      WebView view,
-                                      WebResourceRequest request
-                              ) {
-
-                                  view.loadUrl(
-                                          request.getUrl().toString()
-                                  );
-
-                                  return true;
-                              }
-
-                              @Override
-                              public boolean shouldOverrideUrlLoading(
-                                      WebView view,
-                                      String url
-                              ) {
-
-                                  view.loadUrl(url);
-
-                                  return true;
-                              }
-                          }
-                  );
-
-                  webView.setWebChromeClient(
-                          new WebChromeClient()
-                  );
-
-                  webView.setDownloadListener(
-                          new DownloadListener() {
-
-                              @Override
-                              public void onDownloadStart(
-                                      String url,
-                                      String userAgent,
-                                      String contentDisposition,
-                                      String mimeType,
-                                      long contentLength
-                              ) {
-
-                                  try {
-
-                                      Intent intent =
-                                              new Intent(
-                                                      Intent.ACTION_VIEW,
-                                                      Uri.parse(url)
-                                              );
-
-                                      startActivity(intent);
-
-                                  } catch (Exception ignored) {
-                                  }
-                              }
-                          }
-                  );
-
-                  if (
-                          android.os.Build.VERSION.SDK_INT >=
-                          android.os.Build.VERSION_CODES.LOLLIPOP
-                  ) {
-
-                      settings.setMixedContentMode(
-                              WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                      );
-                  }
-              }
-
-              private void loadWebsite() {
-
-                  String url =
-                          "https://example.com";
-
-                  try {
-
-                      InputStream input =
-                              getAssets().open(
-                                      "config.json"
-                              );
-
-                      byte[] data =
-                              new byte[input.available()];
-
-                      input.read(data);
-
-                      input.close();
-
-                      JSONObject config =
-                              new JSONObject(
-                                      new String(
-                                              data,
-                                              StandardCharsets.UTF_8
-                                      )
-                              );
-
-                      url =
-                              config.getString("url");
-
-                  } catch (Exception ignored) {
-                  }
-
-                  webView.loadUrl(url);
-              }
-
-              @Override
-              public void onBackPressed() {
-
-                  if (
-                          webView != null &&
-                          webView.canGoBack()
-                  ) {
-
-                      webView.goBack();
-
-                  } else {
-
-                      super.onBackPressed();
-                  }
-              }
-
-              @Override
-              protected void onDestroy() {
-
-                  if (webView != null) {
-
-                      webView.stopLoading();
-
-                      webView.destroy();
-
-                      webView = null;
-                  }
-
-                  super.onDestroy();
+                  setContentView(web);
               }
           }
           EOF
 
-
-      # =========================================
-      # CREATE APP ICON
-      # =========================================
-
-      - name: Create App Icon
-        shell: bash
-        env:
-          ICON_DATA: ${{ github.event.client_payload.icon }}
-        run: |
-          set -e
-
-          mkdir -p app/src/main/res/drawable
-
-          if [ -n "$ICON_DATA" ]; then
-
-            echo "Logo dari HTML ditemukan."
-
-            CLEAN_ICON="$ICON_DATA"
-
-            case "$CLEAN_ICON" in
-              data:image/*)
-                CLEAN_ICON="${CLEAN_ICON#*,}"
-                ;;
-            esac
-
-            printf '%s' "$CLEAN_ICON" \
-              | base64 -d \
-              > app/src/main/res/drawable/ic_launcher.webp
-
-            if [ ! -s app/src/main/res/drawable/ic_launcher.webp ]; then
-              echo "ERROR: Logo kosong atau gagal decode."
-              exit 1
-            fi
-
-            echo "Logo berhasil dibuat."
-
-            ls -lh \
-              app/src/main/res/drawable/ic_launcher.webp
-
-          else
-
-            echo "Logo tidak dikirim."
-            echo "Membuat icon default."
-
-            printf '%s\n' \
-              '<?xml version="1.0" encoding="utf-8"?>' \
-              '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">' \
-              '<path android:fillColor="#6C63FF" android:pathData="M0,0 L108,0 L108,108 L0,108 Z"/>' \
-              '<path android:fillColor="#FFFFFF" android:pathData="M30,30 L78,30 L78,78 L30,78 Z"/>' \
-              '</vector>' \
-              > app/src/main/res/drawable/ic_launcher.xml
-
-            echo "Icon default berhasil dibuat."
-
-          fi
-
-
-      # =========================================
-      # VERIFY PROJECT
-      # =========================================
-
-      - name: Verify Android Project
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "PROJECT FILES"
-          echo "========================================"
-
-          find app/src/main \
-            -type f \
-            | sort
-
-          echo ""
-          echo "========================================"
-          echo "MANIFEST"
-          echo "========================================"
-
-          cat app/src/main/AndroidManifest.xml
-
-          echo ""
-          echo "========================================"
-          echo "CONFIG"
-          echo "========================================"
-
-          cat app/src/main/assets/config.json
-
-          echo ""
-          echo "========================================"
-          echo "MAIN ACTIVITY"
-          echo "========================================"
-
-          grep -n \
-            "public class MainActivity extends Activity" \
-            "app/src/main/java/${PACKAGE_NAME//./\/}/MainActivity.java"
-
-          echo ""
-          echo "========================================"
-          echo "ICON"
-          echo "========================================"
-
-          ls -lh app/src/main/res/drawable/
-
-
-      # =========================================
-      # BUILD APK
-      # =========================================
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build APK
-        shell: bash
         run: |
           set -e
-
-          echo "========================================"
-          echo "JAVA"
-          echo "========================================"
-
-          java -version
-
-          echo ""
-          echo "========================================"
-          echo "GRADLE"
-          echo "========================================"
-
-          gradle --version
-
-          echo ""
-          echo "========================================"
-          echo "BUILD APK"
-          echo "========================================"
-
-          gradle \
-            --no-daemon \
-            --no-parallel \
-            --max-workers=2 \
-            --stacktrace \
-            --info \
-            assembleDebug
-
-
-      # =========================================
-      # CHECK APK
-      # =========================================
-
-      - name: Check APK
-        shell: bash
-        run: |
-          set -e
-
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK tidak ditemukan."
-            exit 1
-          fi
-
-          echo "APK berhasil dibuat."
-
-          ls -lh "$APK"
-
-
-      # =========================================
-      # RENAME APK
-      # =========================================
+          gradle wrapper --gradle-version 8.9
+          ./gradlew assembleDebug --stacktrace
 
       - name: Rename APK
-        shell: bash
         run: |
-          set -e
-
-          SAFE_NAME=$(echo "$APP_NAME" \
-            | sed 's/[^a-zA-Z0-9._-]/_/g')
-
-          if [ -z "$SAFE_NAME" ]; then
-            SAFE_NAME="WebToAPK"
-          fi
-
-          cp \
-            app/build/outputs/apk/debug/app-debug.apk \
-            "${SAFE_NAME}.apk"
-
-          echo "APK FINAL:"
-          echo "${SAFE_NAME}.apk"
-
-
-      # =========================================
-      # UPLOAD APK
-      # =========================================
+          mkdir -p output
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            "output/${{ inputs.app_name }}.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: WebToAPK
-          path: "*.apk"
-          if-no-files-found: error
+          path: output/*.apk
